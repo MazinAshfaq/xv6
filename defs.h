@@ -9,7 +9,9 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
-
+#ifdef CS333_P2
+struct uproc;
+#endif //CS333_P2
 // bio.c
 void            binit(void);
 struct buf*     bread(uint, uint);
@@ -124,6 +126,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+#ifdef CS333_P2
+int             getprocs(uint, struct uproc*);
+#endif //CS333__P2
 #ifdef CS333_P3
 void            printFreeList(void);
 void            printList(int);

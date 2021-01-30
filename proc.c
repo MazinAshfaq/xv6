@@ -5,6 +5,7 @@
 #include "mmu.h"
 #include "x86.h"
 #include "proc.h"
+#include "uproc.h"
 #include "spinlock.h"
 
 static char *states[] = {
@@ -147,6 +148,13 @@ allocproc(void)
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
 
+  //Starting ticks
+  p->start_ticks = ticks;
+#ifdef CS333_P2
+  p->cpu_ticks_total = 0;
+  p->cpu_ticks_in = 0;
+#endif //CS333_P2
+
   return p;
 }
 
@@ -176,7 +184,11 @@ userinit(void)
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
-
+#ifdef CS333_P2
+  p->parent = 0;
+  p->uid = DEFAULT_UID;
+  p->gid = DEFAULT_GID;
+#endif //CS333_P2
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
@@ -233,6 +245,11 @@ fork(void)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+
+#ifdef CS333_P2
+  np->uid = curproc->uid;
+  np->gid = curproc->gid;
+#endif //CS333_P2
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -387,6 +404,9 @@ scheduler(void)
       c->proc = p;
       switchuvm(p);
       p->state = RUNNING;
+#ifdef CS333_P2
+      p->cpu_ticks_in = ticks;
+#endif //CS333_P2
       swtch(&(c->scheduler), p->context);
       switchkvm();
 
@@ -427,6 +447,9 @@ sched(void)
   if(readeflags()&FL_IF)
     panic("sched interruptible");
   intena = mycpu()->intena;
+#ifdef CS333_P2
+  p->cpu_ticks_total += (ticks - p->cpu_ticks_in);
+#endif //CS333_P2
   swtch(&p->context, mycpu()->scheduler);
   mycpu()->intena = intena;
 }
@@ -445,7 +468,7 @@ yield(void)
 
 // A fork child's very first scheduling by scheduler()
 // will swtch here.  "Return" to user space.
-void
+  void
 forkret(void)
 {
   static int first = 1;
@@ -466,7 +489,7 @@ forkret(void)
 
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
-void
+  void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
@@ -503,7 +526,7 @@ sleep(void *chan, struct spinlock *lk)
 //PAGEBREAK!
 // Wake up all processes sleeping on chan.
 // The ptable lock must be held.
-static void
+  static void
 wakeup1(void *chan)
 {
   struct proc *p;
@@ -514,7 +537,7 @@ wakeup1(void *chan)
 }
 
 // Wake up all processes sleeping on chan.
-void
+  void
 wakeup(void *chan)
 {
   acquire(&ptable.lock);
@@ -550,23 +573,48 @@ kill(int pid)
 // Runs when user types ^P on console.
 // No lock to avoid wedging a stuck machine further.
 
+void
+padms(int ms)
+{
+    if(ms < 10)  cprintf("00");
+    if(ms < 100) cprintf("0");
+}
 #if defined(CS333_P2)
 void
 procdumpP2P3P4(struct proc *p, char *state_string)
 {
-  cprintf("TODO for Project 2, delete this line and implement procdumpP2P3P4() in proc.c to print a row\n");
+  int ppid;
+  if(p->parent){
+    ppid = p->parent->pid;
+  }
+  else{
+    ppid = p->pid; 
+  } 
+ 
+  int elapsed_ms = (ticks - p->start_ticks)%1000;
+  int cpu_t_ms = (p->cpu_ticks_total)%1000;
+
+  cprintf("%d\t%s\t     %d    \t%d\t%d\t%d.",
+      p->pid,p->name,p->uid,p->gid,ppid,(ticks - p->start_ticks)/1000);
+
+      padms(elapsed_ms);
+      cprintf("%d\t%d.",elapsed_ms,(p->cpu_ticks_total)/1000);
+      padms(cpu_t_ms);
+      cprintf("%d\t%s\t%d\t",cpu_t_ms,state_string,p->sz);
+
   return;
 }
 #elif defined(CS333_P1)
 void
 procdumpP1(struct proc *p, char *state_string)
 {
-  cprintf("TODO for Project 1, delete this line and implement procdumpP1() in proc.c to print a row\n");
+  cprintf("\n");
+  cprintf("%d\t%s\t     %d.%d\t%s\t%d\t", p->pid, p->name,(ticks - p->start_ticks)/1000,(ticks - p->start_ticks)%1000, state_string, p->sz);
   return;
 }
-#endif
+#endif //CS333_P1
 
-void
+  void
 procdump(void)
 {
   int i;
@@ -723,11 +771,11 @@ initFreeList(void)
 static void
 assertState(struct proc *p, enum procstate state, const char * func, int line)
 {
-    if (p->state == state)
-      return;
-    cprintf("Error: proc state is %s and should be %s.\nCalled from %s line %d\n",
-        states[p->state], states[state], func, line);
-    panic("Error: Process state incorrect in assertState()");
+  if (p->state == state)
+    return;
+  cprintf("Error: proc state is %s and should be %s.\nCalled from %s line %d\n",
+      states[p->state], states[state], func, line);
+  panic("Error: Process state incorrect in assertState()");
 }
 #endif
 
@@ -867,7 +915,7 @@ printReadyLists()
   struct proc *p;
 
   cprintf("Ready List Processes:\n");
-// this look must be changed based on MAX/MIN prio
+  // this look must be changed based on MAX/MIN prio
   for (int i=PRIO_MIN; i<=PRIO_MAX; i++) {
     p = ptable.ready[i].head;
     cprintf("Prio %d: ", i);
@@ -915,4 +963,37 @@ checkProcs(const char *file, const char *func, int line)
   }
 }
 #endif // DEBUG
+#ifdef CS333_P2
+int 
+getprocs(uint max, struct uproc* table)
+{
+  int x = 0;//Number of processes 
+  struct proc *p;
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC] && x < max; p++){
+    if(p->state == RUNNABLE || p->state == RUNNING || p->state == SLEEPING) {
+
+      table[x].pid = p->pid;
+      table[x].uid = p->uid;
+      table[x].gid = p->gid;
+
+      if(p->pid == 1){
+        table[x].ppid = 1;
+      }
+      else {
+        table[x].ppid = p->parent->pid;
+      }
+
+      table[x].elapsed_ticks = (ticks - p->start_ticks);
+      table[x].CPU_total_ticks = p->cpu_ticks_total;
+      safestrcpy(table[x].state, states[p->state], STRMAX);
+      table[x].size = p->sz;
+      safestrcpy(table[x].name, p->name, STRMAX);
+      x++;
+    }
+  }
+  release(&ptable.lock);
+  return x;
+}
+#endif //CS333_P2
 

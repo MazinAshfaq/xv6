@@ -36,11 +36,17 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
 struct proc {
+  uint cpu_ticks_total;        // Total elapsed ticks in CPU
+  uint cpu_ticks_in;           // Ticks when scheduled
+  uint start_ticks;	       // Allow process to know when created
   uint sz;                     // Size of process memory (bytes)
   pde_t* pgdir;                // Page table
   char *kstack;                // Bottom of kernel stack for this process
   enum procstate state;        // Process state
   uint pid;                    // Process ID
+  uint uid;                    // Unique ID
+  uint gid;                    // Group ID
+  uint ppid;                   // Parent Proccess ID
   struct proc *parent;         // Parent process. NULL indicates no parent
   struct trapframe *tf;        // Trap frame for current syscall
   struct context *context;     // swtch() here to run process
