@@ -131,7 +131,9 @@ allocproc(void)
     return 0;
   }
 #ifdef CS333_P3
-  //TODO remove from unese list
+  if(stateListRemove(&ptable.list[UNUSED],p) == -1){
+    panic("Failed to remove UNUSED in allocproc()");
+  }
   assertState(p,UNUSED,__FUNCTION__, __LINE__);
 #endif
   p->state = EMBRYO;
@@ -148,11 +150,11 @@ allocproc(void)
     if(stateListRemove(&ptable.list[EMBRYO], p) == -1) {
       panic("Failed to remove EMBRYO list after allocation fail in allocproc()");
     }
-    assertState(p,UNUSED,__FUNCTION__, __LINE__);
+    assertState(p,EMBRYO,__FUNCTION__, __LINE__);
 #endif
     p->state = UNUSED;
 #ifdef CS333_P3
-    //TODO add to UNUSED list
+    stateListAdd(&ptable.list[UNUSED],p);
 #endif
     release(&ptable.lock);
     return 0;
@@ -287,7 +289,7 @@ fork(void)
 #endif
     np->state = UNUSED;
 #ifdef CS333_P3
-    //TODO add to UNUSED list
+    stateListAdd(&ptable.list[UNUSED],np);
     release(&ptable.lock);
 #endif
     return -1;
@@ -376,7 +378,7 @@ exit(void)
   }
   assertState(curproc,RUNNING, __FUNCTION__, __LINE__); 
   curproc->state = ZOMBIE;
-  //TODO add to zombie list
+  stateListAdd(&ptable.list[ZOMBIE],curproc);
 #ifdef PDX_XV6
   curproc->sz = 0;
 #endif // PDX_XV6
@@ -460,7 +462,12 @@ wait(void)
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
+        if(stateListRemove(&ptable.list[ZOMBIE],p) == -1){
+          panic("Failed to remove ZOMBIE from wait()");
+        }
+        assertState(p,ZOMBIE,__FUNCTION__,__LINE__);
         p->state = UNUSED;
+        stateListAdd(&ptable.list[UNUSED],p);
         release(&ptable.lock);
         return pid;
       }
@@ -751,7 +758,7 @@ sleep(void *chan, struct spinlock *lk)
   }
   assertState(p,RUNNING, __FUNCTION__, __LINE__);
   p->state = SLEEPING;
-  //TODO add to SLEEPING list
+  stateListAdd(&ptable.list[SLEEPING],p);
   sched();
   // Tidy up.
   p->chan = 0;
@@ -805,11 +812,20 @@ static void
 wakeup1(void *chan)
 {
   struct proc *p;
-
+  struct proc *temp;
+//  p = ptable.list[SLEEPING].head;
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->state == SLEEPING && p->chan == chan){
-      //TODO remvoe from SLEEPING. what if there are multiple sleeping etc.
+      
+      temp = p->next;
+      if(stateListRemove(&ptable.list[SLEEPING],p) == -1){
+        panic("Failed to wake up process in wakeup1()");
+      }
+      
+      p->next = temp;
       assertState(p, SLEEPING, __FUNCTION__, __LINE__);
+
+
       p->state = RUNNABLE;
       stateListAdd(&ptable.list[RUNNABLE], p);
     }
@@ -843,16 +859,20 @@ int
 kill(int pid)
 {
   struct proc *p;
-
+  struct proc *temp;
   acquire(&ptable.lock);
+
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary
-      if(p->state == SLEEPING){
-        //TODO remove from SLEEPING list
-        //think carefully could there be further sleeping processes that we need to wake up if we remove p from sleeping list what does p->next become
-        assertState(p, SLEEPING,__FUNCTION__,__LINE__);
+      if(p->state == SLEEPING){ 
+      temp = p->next;
+      if(stateListRemove(&ptable.list[SLEEPING],p) == -1){
+        panic("Failed to wake up process in kill()");
+      } 
+        p->next = temp;
+        assertState(p, SLEEPING, __FUNCTION__, __LINE__);
         p->state = RUNNABLE;
         stateListAdd(&ptable.list[RUNNABLE], p);
       }
