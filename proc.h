@@ -36,6 +36,9 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
 // Per-process state
 struct proc {
+#ifdef CS333_P3
+  struct proc * next;          // Points to the next process for whatever list a process is a member
+#endif 
   uint cpu_ticks_total;        // Total elapsed ticks in CPU
   uint cpu_ticks_in;           // Ticks when scheduled
   uint start_ticks;	       // Allow process to know when created

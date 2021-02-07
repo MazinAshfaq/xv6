@@ -18,6 +18,10 @@ static char *states[] = {
 };
 
 #ifdef CS333_P3
+#define statecount NELEM(states)
+#endif
+
+#ifdef CS333_P3
 // record with head and tail pointer for constant-time access to the beginning
 // and end of a linked list of struct procs.  use with stateListAdd() and
 // stateListRemove().
@@ -30,6 +34,9 @@ struct ptrs {
 static struct {
   struct spinlock lock;
   struct proc proc[NPROC];
+#ifdef CS333_P3
+  struct ptrs list[statecount];
+#endif
 } ptable;
 
 // list management function prototypes
@@ -123,13 +130,31 @@ allocproc(void)
     release(&ptable.lock);
     return 0;
   }
+#ifdef CS333_P3
+  //TODO remove from unese list
+  assertState(p,UNUSED,__FUNCTION__, __LINE__);
+#endif
   p->state = EMBRYO;
+#ifdef CS333_P3
+  stateListAdd(&ptable.list[EMBRYO], p);
+#endif
   p->pid = nextpid++;
   release(&ptable.lock);
 
   // Allocate kernel stack.
   if((p->kstack = kalloc()) == 0){
+#ifdef CS333_P3
+    acquire(&ptable.lock);
+    if(stateListRemove(&ptable.list[EMBRYO], p) == -1) {
+      panic("Failed to remove EMBRYO list after allocation fail in allocproc()");
+    }
+    assertState(p,UNUSED,__FUNCTION__, __LINE__);
+#endif
     p->state = UNUSED;
+#ifdef CS333_P3
+    //TODO add to UNUSED list
+#endif
+    release(&ptable.lock);
     return 0;
   }
   sp = p->kstack + KSTACKSIZE;
@@ -165,7 +190,12 @@ userinit(void)
 {
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
-
+#ifdef CS333_P3
+  acquire(&ptable.lock);
+  initProcessLists();
+  initFreeList();
+  release(&ptable.lock);
+#endif
   p = allocproc();
 
   initproc = p;
@@ -194,7 +224,16 @@ userinit(void)
   // writes to be visible, and the lock is also needed
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
+#ifdef CS333_P3
+  if(stateListRemove(&ptable.list[EMBRYO], p) == -1) {
+    panic("Failed to remove from EMBRYO list after successful allocation in userinit()");
+  }
+  assertState(p,EMBRYO,__FUNCTION__, __LINE__);
+#endif
   p->state = RUNNABLE;
+#ifdef CS333_P3
+  stateListAdd(&ptable.list[RUNNABLE], p);
+#endif 
   release(&ptable.lock);
 }
 
@@ -239,7 +278,18 @@ fork(void)
   if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
     kfree(np->kstack);
     np->kstack = 0;
+#ifdef CS333_P3
+    acquire(&ptable.lock);
+    if(stateListRemove(&ptable.list[EMBRYO], np) == -1) {
+      panic("Failed to remove from EMBRYO list in fork()");
+      }
+      assertState(np,EMBRYO,__FUNCTION__, __LINE__);
+#endif
     np->state = UNUSED;
+#ifdef CS333_P3
+    //TODO add to UNUSED list
+    release(&ptable.lock);
+#endif
     return -1;
   }
   np->sz = curproc->sz;
@@ -264,7 +314,16 @@ fork(void)
   pid = np->pid;
 
   acquire(&ptable.lock);
+#ifdef CS333_P3
+  if(stateListRemove(&ptable.list[EMBRYO], np) == -1) {
+    panic("Failed to remove from EMBRYO on successful fork");
+    }
+    assertState(np, EMBRYO, __FUNCTION__, __LINE__);
+#endif
   np->state = RUNNABLE;
+#ifdef CS333_P3
+  stateListAdd(&ptable.list[RUNNABLE], np);
+#endif
   release(&ptable.lock);
 
   return pid;
@@ -312,11 +371,17 @@ exit(void)
   }
 
   // Jump into the scheduler, never to return.
+  if(stateListRemove(&ptable.list[RUNNING], curproc) == -1){
+    panic("Failed to remove RUNNING process from list in exit()");
+  }
+  assertState(curproc,RUNNING, __FUNCTION__, __LINE__); 
   curproc->state = ZOMBIE;
+  //TODO add to zombie list
 #ifdef PDX_XV6
   curproc->sz = 0;
 #endif // PDX_XV6
   sched();
+  release(&ptable.lock);
   panic("zombie exit");
 }
 #else
@@ -495,7 +560,14 @@ scheduler(void)
 #endif // PDX_XV6
       c->proc = p;
       switchuvm(p);
+      if(stateListRemove(&ptable.list[RUNNABLE], p) == -1) {
+        panic("Failed to remove process we will run from RUNNABLE list in scheduler()");
+      }
+      assertState(p, RUNNABLE, __FUNCTION__, __LINE__);
       p->state = RUNNING;
+#ifdef CS333_P3
+      stateListAdd(&ptable.list[RUNNING], p);
+#endif
 #ifdef CS333_P2
       p->cpu_ticks_in = ticks;
 #endif //CS333_P2
@@ -607,7 +679,12 @@ yield(void)
   struct proc *curproc = myproc();
 
   acquire(&ptable.lock);  //DOC: yieldlock
-  curproc->state = RUNNABLE;
+  if(stateListRemove(&ptable.list[RUNNING], curproc) == -1){
+    panic("Failed to remove RUNNING process from list in sleep()");
+  }
+  assertState(curproc,RUNNING, __FUNCTION__, __LINE__);
+  curproc->state = RUNNABLE; 
+  stateListAdd(&ptable.list[RUNNABLE],curproc);
   sched();
   release(&ptable.lock);
 }
@@ -618,7 +695,10 @@ yield(void)
   struct proc *curproc = myproc();
 
   acquire(&ptable.lock);  //DOC: yieldlock
+  //TODO remove from RUNNING list
+  assertState(curproc, RUNNING, __FUNCION__, __LINE__);
   curproc->state = RUNNABLE;
+  stateListAdd(&ptable.list[RUNNABLE], curproc);
   sched();
   release(&ptable.lock);
 }
@@ -629,10 +709,8 @@ yield(void)
 void
 forkret(void)
 {
-  static int first = 1;
-  // Still holding ptable.lock from scheduler.
-  release(&ptable.lock);
-
+ static int first = 1; // Still holding ptable.lock from scheduler.  
+ release(&ptable.lock); 
   if (first) {
     // Some initialization functions must be run in the context
     // of a regular process (e.g., they call sleep), and thus cannot
@@ -668,10 +746,13 @@ sleep(void *chan, struct spinlock *lk)
   }
   // Go to sleep.
   p->chan = chan;
+  if(stateListRemove(&ptable.list[RUNNING], p) == -1){
+    panic("Failed to remove RUNNING process from list in sleep()");
+  }
+  assertState(p,RUNNING, __FUNCTION__, __LINE__);
   p->state = SLEEPING;
-
+  //TODO add to SLEEPING list
   sched();
-
   // Tidy up.
   p->chan = 0;
 
@@ -725,9 +806,14 @@ wakeup1(void *chan)
 {
   struct proc *p;
 
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == SLEEPING && p->chan == chan){
+      //TODO remvoe from SLEEPING. what if there are multiple sleeping etc.
+      assertState(p, SLEEPING, __FUNCTION__, __LINE__);
       p->state = RUNNABLE;
+      stateListAdd(&ptable.list[RUNNABLE], p);
+    }
+  }
 }
 #else
 static void
@@ -763,8 +849,13 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING){
+        //TODO remove from SLEEPING list
+        //think carefully could there be further sleeping processes that we need to wake up if we remove p from sleeping list what does p->next become
+        assertState(p, SLEEPING,__FUNCTION__,__LINE__);
         p->state = RUNNABLE;
+        stateListAdd(&ptable.list[RUNNABLE], p);
+      }
       release(&ptable.lock);
       return 0;
     }
