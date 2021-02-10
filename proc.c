@@ -155,8 +155,9 @@ allocproc(void)
     p->state = UNUSED;
 #ifdef CS333_P3
     stateListAdd(&ptable.list[UNUSED],p);
-#endif
     release(&ptable.lock);
+#endif
+    //release(&ptable.lock);
     return 0;
   }
   sp = p->kstack + KSTACKSIZE;
