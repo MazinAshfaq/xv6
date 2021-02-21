@@ -62,7 +62,7 @@ extern void forkret(void);
 extern void trapret(void);
 static void wakeup1(void* chan);
 
-  void
+void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
@@ -425,7 +425,14 @@ exit(void)
     p = p->next; 
   }
 
-  p = ptable.list[RUNNING].head;
+ p = ptable.list[RUNNING].head;
+  while(p){
+    if(p->parent == curproc)
+      p->parent = initproc;
+    p = p->next; 
+  }
+
+  p = ptable.list[EMBRYO].head;
   while(p){
     if(p->parent == curproc)
       p->parent = initproc;
@@ -561,6 +568,12 @@ wait(void)
       p = p->next;
     }
     p = ptable.list[SLEEPING].head;
+    while(p && !havekids){
+      if(p->parent == curproc)
+        havekids = 1; 
+      p = p->next;
+    }
+    p = ptable.list[EMBRYO].head;
     while(p && !havekids) {
       if(p->parent == curproc)
         havekids = 1; 
@@ -670,9 +683,9 @@ scheduler(void)
       }
       assertState(p, RUNNABLE, __FUNCTION__, __LINE__);
       p->state = RUNNING;
-#ifdef CS333_P3
+//#ifdef CS333_P3
       stateListAdd(&ptable.list[RUNNING], p);
-#endif
+//#endif
 #ifdef CS333_P2
       p->cpu_ticks_in = ticks;
 #endif //CS333_P2
@@ -808,7 +821,7 @@ yield(void)
 
 // A fork child's very first scheduling by scheduler()
 // will swtch here.  "Return" to user space.
-  void
+void
 forkret(void)
 {
   static int first = 1; // Still holding ptable.lock from scheduler.  
@@ -981,6 +994,24 @@ kill(int pid)
     p = p->next;
   }
 
+  p = ptable.list[EMBRYO].head;
+  while(p) {
+    if(p->pid == pid){
+      p->killed = 1;
+      release(&ptable.lock);
+      return 0;
+    }
+    p = p->next;
+  }
+  p = ptable.list[ZOMBIE].head;
+  while(p) {
+    if(p->pid == pid){
+      p->killed = 1;
+      release(&ptable.lock);
+      return 0;
+    }
+    p = p->next;
+  }
  
   p = ptable.list[SLEEPING].head;
   while(p){
@@ -1052,9 +1083,14 @@ procdumpP2P3P4(struct proc *p, char *state_string)
   int elapsed_ms = (ticks - p->start_ticks)%1000;
   int cpu_t_ms = (p->cpu_ticks_total)%1000;
 
+  if(strlen(p->name) > 7){
+  cprintf("%d\t%s  %d    \t%d\t%d\t%d.",
+      p->pid,p->name,p->uid,p->gid,ppid,(ticks - p->start_ticks)/1000);
+  }
+  else{
   cprintf("%d\t%s\t     %d    \t%d\t%d\t%d.",
       p->pid,p->name,p->uid,p->gid,ppid,(ticks - p->start_ticks)/1000);
-
+  }
   padms(elapsed_ms);
   cprintf("%d\t%d.",elapsed_ms,(p->cpu_ticks_total)/1000);
   padms(cpu_t_ms);
@@ -1082,6 +1118,8 @@ procdump(void)
 
 #if defined(CS333_P4)
 #define HEADER "\nPID\tName         UID\tGID\tPPID\tPrio\tElapsed\tCPU\tState\tSize\t PCs\n"
+//#elif defined(CS333_P3)
+//#define HEADER "\nPID\tName\t\tUID\tGID\tPPID\tElapsed\tCPU\tState\tSize\tPCs\n"
 #elif defined(CS333_P2)
 #define HEADER "\nPID\tName         UID\tGID\tPPID\tElapsed\tCPU\tState\tSize\t PCs\n"
 #elif defined(CS333_P1)
